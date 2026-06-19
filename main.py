@@ -7,6 +7,8 @@ from app.core.config import settings
 from app.core.database import init_db
 from app.routes.jobs import router as jobs_router
 from app.routes.bids import router as bids_router
+from app.routes.prompts import router as prompts_router
+from app.routes.memory import router as memory_router
 
 
 @asynccontextmanager
@@ -35,6 +37,8 @@ app.add_middleware(
 
 app.include_router(jobs_router, prefix="/api/v1")
 app.include_router(bids_router, prefix="/api/v1")
+app.include_router(prompts_router, prefix="/api/v1")
+app.include_router(memory_router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["health"])

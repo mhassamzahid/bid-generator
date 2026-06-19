@@ -9,7 +9,7 @@ from sqlalchemy import select, text
 
 from app.core.config import settings
 from app.core.database import get_db, AsyncSessionLocal
-from app.models import Job, Bid
+from app.models import Job, Bid, Prompt, AiMemory
 from app.schemas import JobCreate, JobResponse, BidResponse
 from app.services.mistral import embed_text, stream_chat
 from app.services.rag import find_similar_bids, build_messages
@@ -21,8 +21,9 @@ async def _bid_stream(
     job_id: uuid_module.UUID,
     messages: list[dict],
 ) -> AsyncGenerator[bytes, None]:
-    """Stream bid chunks via SSE, then persist the full bid in a fresh session."""
+    """Stream bid chunks, then persist the full bid and memory in a fresh session."""
     full_text = ""
+    user_message = messages[-1]["content"]
 
     async for chunk in stream_chat(messages):
         full_text += chunk
@@ -33,6 +34,17 @@ async def _bid_stream(
     async with AsyncSessionLocal() as save_db:
         bid = Bid(job_id=job_id, bid_text=full_text, is_manual=False)
         save_db.add(bid)
+        await save_db.flush()
+
+        memory = AiMemory(
+            job_id=job_id,
+            bid_id=bid.id,
+            user_message=user_message,
+            ai_response=full_text,
+            memory_type="bid_generation",
+            memory_metadata={"source": "generate_bid"},
+        )
+        save_db.add(memory)
         await save_db.commit()
         await save_db.refresh(bid)
 
@@ -64,7 +76,25 @@ async def generate_bid(data: JobCreate, db: AsyncSession = Depends(get_db)):
     await db.refresh(job)
 
     similar_bids = await find_similar_bids(db, embedding, settings.RAG_TOP_K)
-    prompt_messages = build_messages(data.model_dump(), similar_bids)
+
+    prompts_result = await db.execute(select(Prompt).where(Prompt.type.in_(["system", "bid_generation"])))
+    prompts = {prompt.type: prompt.prompt for prompt in prompts_result.scalars().all()}
+
+    memory_result = await db.execute(
+        select(AiMemory)
+        .where(AiMemory.ai_response.is_not(None))
+        .order_by(AiMemory.created_at.desc())
+        .limit(settings.RAG_TOP_K)
+    )
+    memories = [
+        {
+            "user_message": memory.user_message,
+            "ai_response": memory.ai_response,
+        }
+        for memory in memory_result.scalars().all()
+    ]
+
+    prompt_messages = build_messages(data.model_dump(), prompts, similar_bids, memories)
 
     return StreamingResponse(
         _bid_stream(job.id, prompt_messages),

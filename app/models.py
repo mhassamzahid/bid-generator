@@ -29,3 +29,26 @@ class Bid(Base):
     bid_text = Column(Text, nullable=False)
     is_manual = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Prompt(Base):
+    __tablename__ = "prompts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    type = Column(String(100), nullable=False, unique=True)
+    prompt = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AiMemory(Base):
+    __tablename__ = "ai_memory"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"))
+    bid_id = Column(UUID(as_uuid=True), ForeignKey("bids.id", ondelete="SET NULL"))
+    user_message = Column(Text, nullable=False)
+    ai_response = Column(Text)
+    memory_type = Column(String(100), nullable=False, default="bid_generation")
+    memory_metadata = Column("metadata", JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)

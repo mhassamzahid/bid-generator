@@ -2,3 +2,7 @@
 *.env
 __pycache__/
 *.pyc
+.agents
+.claude
+.cache
+.codex

@@ -1,6 +1,27 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
+DEFAULT_SYSTEM_PROMPT = (
+    "You are a top-rated Upwork freelancer with a 100% Job Success Score. "
+    "You write bids that win because they are specific, client-focused, and never generic. "
+    "You never use hollow filler phrases or copy-paste language."
+)
+
+DEFAULT_BID_GENERATION_PROMPT = """Write a compelling Upwork bid proposal for this job.
+
+Use the job title, budget, required skills, client info, job description, past similar bids, and memory context provided by the backend.
+
+Write a 200-300 word bid proposal that:
+- Opens with a specific hook that addresses their exact problem
+- Never starts with "I am writing to express..."
+- Shows you understand what they actually need
+- Briefly mentions relevant experience naturally
+- Is conversational and direct, not corporate
+- Uses past winning bids only as inspiration and never copies them
+- Ends with a confident, low-friction call-to-action
+
+Output the bid text only, no extra commentary."""
+
 
 async def find_similar_bids(
     db: AsyncSession,
@@ -27,7 +48,12 @@ async def find_similar_bids(
     return [dict(row._mapping) for row in result.fetchall()]
 
 
-def build_messages(job: dict, similar_bids: list[dict]) -> list[dict]:
+def build_user_message(
+    job: dict,
+    bid_generation_prompt: str,
+    similar_bids: list[dict],
+    memories: list[dict],
+) -> str:
     skills_str = ", ".join(job.get("skills") or []) or "Not specified"
     budget_str = job.get("budget") or "Not specified"
 
@@ -52,7 +78,19 @@ def build_messages(job: dict, similar_bids: list[dict]) -> list[dict]:
             context_block += f"**Bid:**\n{bid['bid_text']}\n"
         context_block += "\n---\n"
 
-    user_prompt = f"""Write a compelling Upwork bid proposal for this job:
+    memory_block = ""
+    if memories:
+        memory_block = "\n\n---\n## Recent AI Memory (use for continuity and style context only):\n"
+        for i, memory in enumerate(memories, 1):
+            memory_block += f"\n### Memory {i}\n"
+            memory_block += f"**User Context:**\n{memory['user_message']}\n"
+            if memory.get("ai_response"):
+                memory_block += f"**AI Response:**\n{memory['ai_response']}\n"
+        memory_block += "\n---\n"
+
+    return f"""{bid_generation_prompt}
+
+## Current Job
 
 **Title:** {job['title']}
 **Budget:** {budget_str}
@@ -62,23 +100,25 @@ def build_messages(job: dict, similar_bids: list[dict]) -> list[dict]:
 **Job Description:**
 {job['description']}
 {context_block}
-Write a 200–300 word bid proposal that:
-- Opens with a specific hook that addresses their exact problem (never start with "I am writing to express...")
-- Shows you understand what they actually need
-- Briefly mentions relevant experience naturally
-- Is conversational and direct — not corporate
-- Ends with a confident, low-friction call-to-action
+{memory_block}"""
 
-Output the bid text only, no extra commentary."""
 
+def build_messages(
+    job: dict,
+    prompts: dict[str, str],
+    similar_bids: list[dict],
+    memories: list[dict],
+) -> list[dict]:
+    user_message = build_user_message(
+        job=job,
+        bid_generation_prompt=prompts.get("bid_generation") or DEFAULT_BID_GENERATION_PROMPT,
+        similar_bids=similar_bids,
+        memories=memories,
+    )
     return [
         {
             "role": "system",
-            "content": (
-                "You are a top-rated Upwork freelancer with a 100% Job Success Score. "
-                "You write bids that win because they are specific, client-focused, and never generic. "
-                "You never use hollow filler phrases or copy-paste language."
-            ),
+            "content": prompts.get("system") or DEFAULT_SYSTEM_PROMPT,
         },
-        {"role": "user", "content": user_prompt},
+        {"role": "user", "content": user_message},
     ]
