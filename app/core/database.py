@@ -4,7 +4,11 @@ from sqlalchemy import text
 
 from app.core.config import settings
 
-engine = create_async_engine(settings.DATABASE_URL, echo=settings.DEBUG)
+engine = create_async_engine(
+    settings.async_database_url,
+    echo=settings.DEBUG,
+    connect_args={"server_settings": {"search_path": "public,extensions"}},
+)
 
 AsyncSessionLocal = async_sessionmaker(
     engine,
