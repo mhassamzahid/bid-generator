@@ -122,3 +122,44 @@ def build_messages(
         },
         {"role": "user", "content": user_message},
     ]
+
+
+def build_revision_messages(
+    job: dict,
+    current_bid: str,
+    instruction: str,
+    prompts: dict[str, str],
+) -> list[dict]:
+    """Build a focused prompt for revising one saved bid version."""
+    skills_str = ", ".join(job.get("skills") or []) or "Not specified"
+    budget_str = job.get("budget") or "Not specified"
+
+    return [
+        {
+            "role": "system",
+            "content": prompts.get("system") or DEFAULT_SYSTEM_PROMPT,
+        },
+        {
+            "role": "user",
+            "content": f"""{prompts.get("bid_generation") or DEFAULT_BID_GENERATION_PROMPT}
+
+## Current Job
+
+**Title:** {job['title']}
+**Budget:** {budget_str}
+**Required Skills:** {skills_str}
+
+**Job Description:**
+{job['description']}
+
+## Current Bid Version
+
+{current_bid}
+
+## User's Requested Edits
+
+{instruction}
+
+Rewrite the bid to apply the requested edits. Keep useful details from the current version unless the instruction changes them. Output only the complete revised bid text, with no commentary.""",
+        },
+    ]

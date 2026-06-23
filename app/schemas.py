@@ -2,7 +2,7 @@ from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ClientInfo(BaseModel):
@@ -50,6 +50,18 @@ class BidResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class BidRevisionRequest(BaseModel):
+    instruction: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("instruction")
+    @classmethod
+    def instruction_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("instruction must not be blank")
+        return value
 
 
 class SeedResponse(BaseModel):
