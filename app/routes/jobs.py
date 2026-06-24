@@ -106,7 +106,7 @@ async def generate_bid(data: JobCreate, db: AsyncSession = Depends(get_db)):
     )
 
 
-@router.get("/", response_model=list[JobResponse], summary="List all submitted jobs")
+@router.get("", response_model=list[JobResponse], summary="List all submitted jobs")
 async def list_jobs(skip: int = 0, limit: int = 20, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Job).order_by(Job.created_at.desc()).offset(skip).limit(limit)

@@ -9,7 +9,7 @@ from app.schemas import MemoryResponse
 router = APIRouter(prefix="/memory", tags=["memory"])
 
 
-@router.get("/", response_model=list[MemoryResponse], summary="List stored AI memory entries")
+@router.get("", response_model=list[MemoryResponse], summary="List stored AI memory entries")
 async def list_memory(skip: int = 0, limit: int = 20, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(AiMemory)

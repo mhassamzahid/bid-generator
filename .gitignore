@@ -6,3 +6,6 @@ __pycache__/
 .claude
 .cache
 .codex
+package
+*.zip
+logs

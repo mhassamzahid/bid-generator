@@ -11,7 +11,7 @@ from app.schemas import PromptCreate, PromptResponse, PromptUpdate
 router = APIRouter(prefix="/prompts", tags=["prompts"])
 
 
-@router.get("/", response_model=list[PromptResponse], summary="List editable AI prompts")
+@router.get("", response_model=list[PromptResponse], summary="List editable AI prompts")
 async def list_prompts(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Prompt).order_by(Prompt.type.asc()))
     return result.scalars().all()
