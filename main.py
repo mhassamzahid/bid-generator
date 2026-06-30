@@ -9,6 +9,8 @@ from app.routes.jobs import router as jobs_router
 from app.routes.bids import router as bids_router
 from app.routes.prompts import router as prompts_router
 from app.routes.memory import router as memory_router
+from app.routes.profiles import router as profiles_router
+from app.routes.projects import router as projects_router
 
 
 @asynccontextmanager
@@ -21,9 +23,9 @@ app = FastAPI(
     title="Upwork Bid Generator API",
     description=(
         "AI-powered Upwork bid proposals. "
-        "Uses Mistral embeddings + pgvector RAG to write proposals informed by your past winning bids."
+        "Uses Mistral embeddings + pgvector RAG to write proposals informed by your past projects."
     ),
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
     redirect_slashes=False,
 )
@@ -36,6 +38,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(profiles_router, prefix="/api/v1")
+app.include_router(projects_router, prefix="/api/v1")
 app.include_router(jobs_router, prefix="/api/v1")
 app.include_router(bids_router, prefix="/api/v1")
 app.include_router(prompts_router, prefix="/api/v1")

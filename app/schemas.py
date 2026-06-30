@@ -5,6 +5,56 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 
+# ── Profile ──────────────────────────────────────────────────────────────────
+
+class ProfileCreate(BaseModel):
+    name: str
+    bio: Optional[str] = None
+    skills: Optional[List[str]] = None
+
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    bio: Optional[str] = None
+    skills: Optional[List[str]] = None
+
+
+class ProfileResponse(BaseModel):
+    id: UUID
+    name: str
+    bio: Optional[str] = None
+    skills: Optional[List[str]] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Reference Project ─────────────────────────────────────────────────────────
+
+class ReferenceProjectCreate(BaseModel):
+    profile_id: Optional[UUID] = None
+    title: str
+    description: str
+    skills: Optional[List[str]] = None
+    tech_stack: Optional[List[str]] = None
+    outcome: Optional[str] = None
+
+
+class ReferenceProjectResponse(BaseModel):
+    id: UUID
+    profile_id: Optional[UUID] = None
+    title: str
+    description: str
+    skills: Optional[List[str]] = None
+    tech_stack: Optional[List[str]] = None
+    outcome: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Job / Bid ─────────────────────────────────────────────────────────────────
+
 class ClientInfo(BaseModel):
     country: Optional[str] = None
     hire_rate: Optional[str] = None
@@ -14,6 +64,7 @@ class ClientInfo(BaseModel):
 
 
 class JobCreate(BaseModel):
+    profile_id: Optional[UUID] = None
     title: str
     description: str
     budget: Optional[str] = None
@@ -32,6 +83,7 @@ class BidSeed(BaseModel):
 
 class JobResponse(BaseModel):
     id: UUID
+    profile_id: Optional[UUID] = None
     title: str
     description: str
     budget: Optional[str] = None
@@ -70,6 +122,23 @@ class SeedResponse(BaseModel):
     message: str
 
 
+# ── Conversation view ─────────────────────────────────────────────────────────
+
+class ConversationMessage(BaseModel):
+    memory_type: str
+    bid: BidResponse
+    user_instruction: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationResponse(BaseModel):
+    job: JobResponse
+    messages: List[ConversationMessage]
+
+
+# ── Prompt ────────────────────────────────────────────────────────────────────
+
 class PromptCreate(BaseModel):
     type: str
     prompt: str
@@ -89,11 +158,14 @@ class PromptResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ── Memory ────────────────────────────────────────────────────────────────────
+
 class MemoryResponse(BaseModel):
     id: UUID
     job_id: Optional[UUID] = None
     bid_id: Optional[UUID] = None
     user_message: str
+    user_instruction: Optional[str] = None
     ai_response: Optional[str] = None
     memory_type: str
     metadata: Optional[dict] = Field(

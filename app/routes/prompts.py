@@ -17,7 +17,7 @@ async def list_prompts(db: AsyncSession = Depends(get_db)):
     return result.scalars().all()
 
 
-@router.post("/", response_model=PromptResponse, summary="Create an editable AI prompt")
+@router.post("", response_model=PromptResponse, summary="Create an editable AI prompt")
 async def create_prompt(data: PromptCreate, db: AsyncSession = Depends(get_db)):
     prompt_type = data.type.strip()
     if not prompt_type:

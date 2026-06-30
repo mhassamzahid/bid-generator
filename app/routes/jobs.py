@@ -1,6 +1,6 @@
 import json
 import uuid as uuid_module
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -10,9 +10,16 @@ from sqlalchemy import select, text
 from app.core.config import settings
 from app.core.database import get_db, AsyncSessionLocal
 from app.models import Job, Bid, Prompt, AiMemory
-from app.schemas import BidRevisionRequest, JobCreate, JobResponse, BidResponse
+from app.schemas import (
+    BidRevisionRequest,
+    BidResponse,
+    ConversationMessage,
+    ConversationResponse,
+    JobCreate,
+    JobResponse,
+)
 from app.services.mistral import embed_text, stream_chat
-from app.services.rag import build_messages, build_revision_messages, find_similar_bids
+from app.services.rag import build_messages, build_revision_messages, find_similar_projects
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -23,15 +30,13 @@ async def _bid_stream(
     memory_user_message: str,
     memory_type: str = "bid_generation",
     memory_metadata: dict | None = None,
+    user_instruction: str | None = None,
 ) -> AsyncGenerator[bytes, None]:
-    """Stream bid chunks, then persist the full bid and memory in a fresh session."""
     full_text = ""
     async for chunk in stream_chat(messages):
         full_text += chunk
         yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n".encode()
 
-    # The dependency-injected session is closed once the route handler returns,
-    # so we open a dedicated session here to persist the generated bid.
     async with AsyncSessionLocal() as save_db:
         bid = Bid(job_id=job_id, bid_text=full_text, is_manual=False)
         save_db.add(bid)
@@ -41,6 +46,7 @@ async def _bid_stream(
             job_id=job_id,
             bid_id=bid.id,
             user_message=memory_user_message,
+            user_instruction=user_instruction,
             ai_response=full_text,
             memory_type=memory_type,
             memory_metadata=memory_metadata or {"source": "generate_bid"},
@@ -58,6 +64,7 @@ async def generate_bid(data: JobCreate, db: AsyncSession = Depends(get_db)):
     embedding = await embed_text(embed_input)
 
     job = Job(
+        profile_id=data.profile_id,
         title=data.title,
         description=data.description,
         budget=data.budget,
@@ -67,7 +74,6 @@ async def generate_bid(data: JobCreate, db: AsyncSession = Depends(get_db)):
     db.add(job)
     await db.flush()
 
-    # pgvector requires an explicit CAST from text; this bypasses asyncpg OID issues.
     embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
     await db.execute(
         text("UPDATE jobs SET embedding = CAST(:emb AS vector) WHERE id = CAST(:id AS UUID)"),
@@ -76,27 +82,32 @@ async def generate_bid(data: JobCreate, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(job)
 
-    similar_bids = await find_similar_bids(db, embedding, settings.RAG_TOP_K)
+    profile_id_str = str(data.profile_id) if data.profile_id else None
+    similar_projects = await find_similar_projects(db, embedding, settings.RAG_TOP_K, profile_id_str)
 
     prompts_result = await db.execute(select(Prompt).where(Prompt.type.in_(["system", "bid_generation"])))
     prompts = {prompt.type: prompt.prompt for prompt in prompts_result.scalars().all()}
 
-    memory_result = await db.execute(
+    memory_query = (
         select(AiMemory)
+        .join(Job, AiMemory.job_id == Job.id)
         .where(AiMemory.ai_response.is_not(None))
         .order_by(AiMemory.created_at.desc())
         .limit(settings.RAG_TOP_K)
     )
+    if data.profile_id:
+        memory_query = memory_query.where(Job.profile_id == data.profile_id)
+    memory_result = await db.execute(memory_query)
     memories = [
         {
-            "user_message": memory.user_message,
+            "user_instruction": memory.user_instruction,
             "ai_response": memory.ai_response,
         }
         for memory in memory_result.scalars().all()
     ]
 
     job_data = data.model_dump(mode="json")
-    prompt_messages = build_messages(job_data, prompts, similar_bids, memories)
+    prompt_messages = build_messages(job_data, prompts, similar_projects, memories)
     memory_user_message = json.dumps({"job": job_data})
 
     return StreamingResponse(
@@ -107,10 +118,16 @@ async def generate_bid(data: JobCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("", response_model=list[JobResponse], summary="List all submitted jobs")
-async def list_jobs(skip: int = 0, limit: int = 20, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Job).order_by(Job.created_at.desc()).offset(skip).limit(limit)
-    )
+async def list_jobs(
+    profile_id: Optional[uuid_module.UUID] = None,
+    skip: int = 0,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(Job).order_by(Job.created_at.desc()).offset(skip).limit(limit)
+    if profile_id:
+        query = query.where(Job.profile_id == profile_id)
+    result = await db.execute(query)
     return result.scalars().all()
 
 
@@ -121,6 +138,39 @@ async def get_job(job_id: uuid_module.UUID, db: AsyncSession = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@router.get("/{job_id}/conversation", response_model=ConversationResponse, summary="Get ChatGPT-style conversation for a job")
+async def get_job_conversation(job_id: uuid_module.UUID, db: AsyncSession = Depends(get_db)):
+    job_result = await db.execute(select(Job).where(Job.id == job_id))
+    job = job_result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    bids_result = await db.execute(
+        select(Bid).where(Bid.job_id == job_id).order_by(Bid.created_at.asc())
+    )
+    bids = bids_result.scalars().all()
+
+    memories_result = await db.execute(
+        select(AiMemory)
+        .where(AiMemory.job_id == job_id)
+        .order_by(AiMemory.created_at.asc())
+    )
+    memories_by_bid = {str(m.bid_id): m for m in memories_result.scalars().all()}
+
+    messages = []
+    for bid in bids:
+        memory = memories_by_bid.get(str(bid.id))
+        messages.append(
+            ConversationMessage(
+                memory_type=memory.memory_type if memory else "bid_generation",
+                bid=BidResponse.model_validate(bid),
+                user_instruction=memory.user_instruction if memory else None,
+            )
+        )
+
+    return ConversationResponse(job=JobResponse.model_validate(job), messages=messages)
 
 
 @router.get("/{job_id}/bid", response_model=BidResponse, summary="Get the latest bid for a job")
@@ -202,8 +252,8 @@ async def revise_bid(
             memory_metadata={
                 "source": "bid_revision",
                 "source_bid_id": str(current_bid.id),
-                "edit_instruction": data.instruction.strip(),
             },
+            user_instruction=data.instruction.strip(),
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Job-ID": str(job.id)},
